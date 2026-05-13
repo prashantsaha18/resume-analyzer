@@ -1,0 +1,24 @@
+{
+  "version": 2,
+  "buildCommand": "pip install -r requirements-vercel.txt && python manage.py collectstatic --noinput --settings=resumeai.settings_vercel && python manage.py migrate --settings=resumeai.settings_vercel",
+  "builds": [
+    {
+      "src": "api/index.py",
+      "use": "@vercel/python"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/(.*)",
+      "dest": "api/index.py"
+    },
+    {
+      "src": "/admin/(.*)",
+      "dest": "api/index.py"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "api/index.py"
+    }
+  ]
+}
