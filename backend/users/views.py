@@ -28,9 +28,10 @@ def dashboard_stats(request):
     from analysis.models import Analysis
     user = request.user
     latest = Analysis.objects.filter(resume__user=user).order_by("-created_at").first()
+    resume_count = Resume.objects.filter(user=user).count()
     return Response({
-        "resume_count":    Resume.objects.filter(user=user).count(),
-        "version_count":   Resume.objects.filter(user=user).count(),
+        "resume_count":    resume_count,
+        "version_count":   resume_count,
         "analysis_count":  Analysis.objects.filter(resume__user=user).count(),
         "latest_ats_score": latest.ats_score if latest else 0,
         "plan":            user.plan,

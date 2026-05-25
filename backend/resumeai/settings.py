@@ -55,6 +55,8 @@ TEMPLATES = [{
 
 WSGI_APPLICATION = 'resumeai.wsgi.application'
 
+import sys
+
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
@@ -66,6 +68,12 @@ DATABASES = {
         'OPTIONS': {'sslmode': 'require'} if os.getenv('DB_HOST', '').endswith('.neon.tech') else {},
     }
 }
+
+if 'test' in sys.argv:
+    DATABASES['default'] = {
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': BASE_DIR / 'db.sqlite3',
+    }
 
 AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},

@@ -35,74 +35,7 @@ MODELS_DIR = Path(__file__).parent / "models"
 
 # ─── Feature Engineering ───────────────────────────────────────────────────────
 
-def extract_features(text: str) -> np.ndarray:
-    """
-    Extract 40+ hand-crafted features from resume text.
-    These are used alongside TF-IDF for better generalization.
-    """
-    text_lower = text.lower()
-    words = text.split()
-    sentences = [s.strip() for s in re.split(r'[.!\n]', text) if len(s.strip()) > 5]
-
-    features = []
-
-    # Length features
-    features.append(len(words))                          # total words
-    features.append(len(text.split('\n')))               # total lines
-    features.append(len(sentences))                      # sentence count
-    avg_sent_len = np.mean([len(s.split()) for s in sentences]) if sentences else 0
-    features.append(avg_sent_len)                        # avg sentence length
-
-    # Content richness
-    features.append(text.count('•'))                     # bullet points
-    features.append(text.count('%'))                     # percentages
-    features.append(sum(1 for c in text if c.isdigit())) # digit count
-    features.append(len(re.findall(r'\$[\d,]+', text)))  # dollar amounts
-    features.append(len(re.findall(r'\d+[KkMm]', text))) # abbreviated numbers
-
-    # Strong/weak verb counts
-    strong_count = sum(1 for v in STRONG_VERBS if v.lower() in text_lower)
-    weak_count = sum(1 for v in WEAK_VERBS if v.lower() in text_lower)
-    features.append(strong_count)
-    features.append(weak_count)
-    features.append(strong_count - weak_count)           # net verb score
-
-    # Section presence (binary)
-    sections = ['summary', 'experience', 'education', 'skills', 'projects',
-                'certifications', 'awards', 'publications', 'languages']
-    for sec in sections:
-        features.append(int(sec in text_lower))
-
-    # Contact info features
-    features.append(int('linkedin' in text_lower))
-    features.append(int('github' in text_lower))
-    features.append(int('@' in text))                    # has email
-    features.append(int(bool(re.search(r'\+?\d[\d\s\-()]{8,}', text))))  # has phone
-
-    # Skill density
-    skill_count = sum(1 for s in TECH_SKILLS if s.lower() in text_lower)
-    features.append(skill_count)
-    features.append(skill_count / max(len(words), 1) * 100)  # skill density %
-
-    # Quality signals
-    buzzword_count = sum(1 for b in BUZZWORDS if b.lower() in text_lower)
-    passive_count = sum(1 for p in PASSIVE_PHRASES if p in text_lower)
-    features.append(buzzword_count)
-    features.append(passive_count)
-    features.append(int('gpa' in text_lower))
-    features.append(int(bool(re.search(r'3\.[5-9]|4\.0', text))))  # high GPA
-
-    # Experience depth
-    years_patterns = re.findall(r'20\d{2}', text)
-    features.append(len(years_patterns))                 # year mentions
-    features.append(len(re.findall(r'present|current', text_lower)))  # current job
-
-    # Company prestige signal
-    top_companies = ['google', 'meta', 'amazon', 'microsoft', 'apple', 'netflix',
-                     'stripe', 'airbnb', 'uber', 'linkedin', 'twitter', 'salesforce']
-    features.append(sum(1 for c in top_companies if c in text_lower))
-
-    return np.array(features, dtype=np.float32)
+from ml_engine.inference import extract_features
 
 
 def prepare_training_data(dataset):
@@ -132,12 +65,17 @@ def train_score_model(texts, hand_features, y_all):
     """
     print("\n[1/8] Training Multi-Score Regressor...")
 
+    is_quick = len(texts) <= 1000
+    max_feats = 300 if is_quick else 3000
+    n_est = 30 if is_quick else 200
+    max_d = 3 if is_quick else 5
+
     # TF-IDF on text
     tfidf = TfidfVectorizer(
-        max_features=3000,
+        max_features=max_feats,
         ngram_range=(1, 2),
         sublinear_tf=True,
-        min_df=2,
+        min_df=2 if not is_quick else 1,
         strip_accents='unicode',
     )
     X_tfidf = tfidf.fit_transform(texts).toarray()
@@ -149,14 +87,14 @@ def train_score_model(texts, hand_features, y_all):
 
     model = MultiOutputRegressor(
         GradientBoostingRegressor(
-            n_estimators=200,
-            max_depth=5,
+            n_estimators=n_est,
+            max_depth=max_d,
             learning_rate=0.08,
             subsample=0.85,
-            min_samples_leaf=4,
+            min_samples_leaf=4 if not is_quick else 2,
             random_state=42,
         ),
-        n_jobs=-1
+        n_jobs=None
     )
     model.fit(X_train, y_train)
 
@@ -232,15 +170,20 @@ def train_job_role_model(dataset):
         X_texts.append(sample['text'])
         y_roles.append(applicable_roles)
 
+    is_quick = len(dataset) <= 1000
+    max_feats = 200 if is_quick else 2000
+    n_est = 20 if is_quick else 100
+    max_d = 4 if is_quick else 8
+
     mlb = MultiLabelBinarizer(classes=list(role_skill_map.keys()))
     y_encoded = mlb.fit_transform(y_roles)
 
-    tfidf = TfidfVectorizer(max_features=2000, ngram_range=(1, 2), sublinear_tf=True, min_df=2)
+    tfidf = TfidfVectorizer(max_features=max_feats, ngram_range=(1, 2), sublinear_tf=True, min_df=2 if not is_quick else 1)
     X = tfidf.fit_transform(X_texts)
 
     clf = MultiOutputRegressor(
-        RandomForestClassifier(n_estimators=100, max_depth=8, random_state=42, n_jobs=-1),
-        n_jobs=-1
+        RandomForestClassifier(n_estimators=n_est, max_depth=max_d, random_state=42, n_jobs=1),
+        n_jobs=None
     )
     clf.fit(X, y_encoded)
     print(f"   Trained on {len(X_texts)} samples, {len(mlb.classes_)} roles")
@@ -288,8 +231,13 @@ def train_ats_match_model(pairs):
     X_texts = [p['resume_text'] + " [SEP] " + p['job_description'] for p in pairs]
     y_match = np.array([p['match_score'] for p in pairs])
 
+    is_quick = len(pairs) <= 1000
+    max_feats = 400 if is_quick else 4000
+    n_est = 30 if is_quick else 150
+    max_d = 3 if is_quick else 4
+
     tfidf = TfidfVectorizer(
-        max_features=4000,
+        max_features=max_feats,
         ngram_range=(1, 2),
         sublinear_tf=True,
         min_df=1,
@@ -297,8 +245,8 @@ def train_ats_match_model(pairs):
     X = tfidf.fit_transform(X_texts)
 
     model = GradientBoostingRegressor(
-        n_estimators=150,
-        max_depth=4,
+        n_estimators=n_est,
+        max_depth=max_d,
         learning_rate=0.1,
         random_state=42,
     )
@@ -459,6 +407,10 @@ def train_all_models(n_samples=5000):
         "buzzwords": BUZZWORDS,
         "passive_phrases": list(PASSIVE_PHRASES),
         "job_roles": JOB_ROLES,
+        "top_companies": ["google", "meta", "amazon", "microsoft", "apple", "netflix", 
+                          "stripe", "airbnb", "uber", "linkedin", "twitter", "salesforce"],
+        "sections": ["summary", "experience", "education", "skills", "projects", 
+                     "certifications", "awards", "publications", "languages"],
     }
     with open(MODELS_DIR / "metadata.json", "w") as f:
         json.dump(rules_meta, f, indent=2)

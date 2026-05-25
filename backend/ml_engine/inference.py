@@ -32,14 +32,44 @@ def _load_meta():
                 _meta = json.load(f)
         else:
             _meta = {
-                "tech_skills": ["Python","JavaScript","React","Node.js","Django","PostgreSQL","AWS","Docker"],
-                "strong_verbs": ["Led","Built","Engineered","Developed","Optimized","Scaled","Launched"],
-                "weak_verbs": ["Responsible for","Helped with","Worked on","Was involved in"],
-                "buzzwords": ["synergy","leverage","paradigm shift","innovative","thought leader"],
-                "passive_phrases": ["was responsible for","was involved in","duties included"],
-                "job_roles": ["Software Engineer","Full Stack Developer","Data Scientist"],
-                "weakness_rules": ["no_quantification","weak_action_verbs","missing_summary"],
+                "tech_skills": ["Python", "JavaScript", "TypeScript", "React", "Node.js", "Django",
+                                 "FastAPI", "PostgreSQL", "MongoDB", "Redis", "Docker", "Kubernetes",
+                                 "AWS", "GCP", "Azure", "Git", "CI/CD", "GraphQL", "REST API"],
+                "strong_verbs": ["Led", "Built", "Engineered", "Architected", "Spearheaded", "Developed",
+                                 "Designed", "Implemented", "Optimized", "Scaled", "Launched", "Delivered",
+                                 "Transformed", "Automated", "Reduced", "Increased", "Improved", "Managed",
+                                 "Mentored", "Collaborated", "Deployed", "Migrated", "Refactored", "Streamlined"],
+                "weak_verbs": ["Responsible for", "Helped with", "Worked on", "Was involved in",
+                               "Assisted with", "Participated in", "Did", "Made", "Tried to",
+                               "Contributed to", "Part of the team that", "Helped", "Was part of"],
+                "buzzwords": ["synergy", "leverage", "paradigm shift", "disruptive", "innovative",
+                              "thought leader", "guru", "ninja", "rockstar", "wizard",
+                              "holistic approach", "ecosystem", "bandwidth", "move the needle",
+                              "circle back", "deep dive", "boil the ocean", "low-hanging fruit"],
+                "passive_phrases": ["was responsible for managing", "was involved in the development of",
+                                    "duties included the maintenance of", "helped in the creation of",
+                                    "assisted in the implementation of", "tasks were completed related to"],
+                "job_roles": ["Software Engineer", "Full Stack Developer", "Data Scientist"],
+                "weakness_rules": ["no_quantification", "weak_action_verbs", "missing_summary"],
             }
+        
+        # Ensure top_companies and sections are present in _meta
+        if "top_companies" not in _meta:
+            _meta["top_companies"] = ["google", "meta", "amazon", "microsoft", "apple", "netflix", 
+                                      "stripe", "airbnb", "uber", "linkedin", "twitter", "salesforce"]
+        if "sections" not in _meta:
+            _meta["sections"] = ['summary', 'experience', 'education', 'skills', 'projects', 
+                                 'certifications', 'awards', 'publications', 'languages']
+                                 
+        # Cache pre-lowercased sets/lists for fast matching
+        _meta["_tech_skills_lower"] = [s.lower() for s in _meta["tech_skills"]]
+        _meta["_strong_verbs_lower"] = [v.lower() for v in _meta["strong_verbs"]]
+        _meta["_weak_verbs_lower"] = [v.lower() for v in _meta["weak_verbs"]]
+        _meta["_buzzwords_lower"] = [b.lower() for b in _meta["buzzwords"]]
+        _meta["_passive_phrases_lower"] = [p.lower() for p in _meta["passive_phrases"]]
+        _meta["_top_companies_lower"] = [c.lower() for c in _meta["top_companies"]]
+        _meta["_sections_lower"] = [s.lower() for s in _meta["sections"]]
+        
     return _meta
 
 
@@ -69,62 +99,73 @@ class ModelStore:
 
 def extract_features(text: str) -> np.ndarray:
     meta = _load_meta()
-    TECH_SKILLS = meta["tech_skills"]
-    STRONG_VERBS = meta["strong_verbs"]
-    WEAK_VERBS = meta["weak_verbs"]
-    BUZZWORDS = meta["buzzwords"]
-    PASSIVE_PHRASES = meta["passive_phrases"]
+    
+    # Use the pre-lowercased cached lists for O(1) lowercasing speed
+    TECH_SKILLS = meta["_tech_skills_lower"]
+    STRONG_VERBS = meta["_strong_verbs_lower"]
+    WEAK_VERBS = meta["_weak_verbs_lower"]
+    BUZZWORDS = meta["_buzzwords_lower"]
+    PASSIVE_PHRASES = meta["_passive_phrases_lower"]
+    SECTIONS = meta["_sections_lower"]
+    TOP_COMPANIES = meta["_top_companies_lower"]
 
     text_lower = text.lower()
     words = text.split()
     sentences = [s.strip() for s in re.split(r'[.!\n]', text) if len(s.strip()) > 5]
 
     features = []
+    
+    # 1-4. Length features
     features.append(len(words))
     features.append(len(text.split('\n')))
     features.append(len(sentences))
     avg_sent_len = np.mean([len(s.split()) for s in sentences]) if sentences else 0
     features.append(avg_sent_len)
+    
+    # 5-9. Formatting and digits
     features.append(text.count('•'))
     features.append(text.count('%'))
-    features.append(sum(1 for c in text if c.isdigit()))
+    features.append(sum(c.isdigit() for c in text)) # Optimized digit count
     features.append(len(re.findall(r'\$[\d,]+', text)))
     features.append(len(re.findall(r'\d+[KkMm]', text)))
 
-    strong_count = sum(1 for v in STRONG_VERBS if v.lower() in text_lower)
-    weak_count = sum(1 for v in WEAK_VERBS if v.lower() in text_lower)
+    # 10-12. Action verbs (Optimized: direct boolean generator summing using cached lowercase lists)
+    strong_count = sum(v in text_lower for v in STRONG_VERBS)
+    weak_count = sum(v in text_lower for v in WEAK_VERBS)
     features.append(strong_count)
     features.append(weak_count)
     features.append(strong_count - weak_count)
 
-    sections = ['summary', 'experience', 'education', 'skills', 'projects',
-                'certifications', 'awards', 'publications', 'languages']
-    for sec in sections:
+    # 13-21. Section presence (binary)
+    for sec in SECTIONS:
         features.append(int(sec in text_lower))
 
+    # 22-25. Contact info (binary/regex)
     features.append(int('linkedin' in text_lower))
     features.append(int('github' in text_lower))
     features.append(int('@' in text))
     features.append(int(bool(re.search(r'\+?\d[\d\s\-()]{8,}', text))))
 
-    skill_count = sum(1 for s in TECH_SKILLS if s.lower() in text_lower)
+    # 26-27. Skill density
+    skill_count = sum(s in text_lower for s in TECH_SKILLS)
     features.append(skill_count)
     features.append(skill_count / max(len(words), 1) * 100)
 
-    buzzword_count = sum(1 for b in BUZZWORDS if b.lower() in text_lower)
-    passive_count = sum(1 for p in PASSIVE_PHRASES if p in text_lower)
+    # 28-31. Buzzwords, Passive voice, GPA
+    buzzword_count = sum(b in text_lower for b in BUZZWORDS)
+    passive_count = sum(p in text_lower for p in PASSIVE_PHRASES)
     features.append(buzzword_count)
     features.append(passive_count)
     features.append(int('gpa' in text_lower))
     features.append(int(bool(re.search(r'3\.[5-9]|4\.0', text))))
 
+    # 32-33. Experience depth
     years_patterns = re.findall(r'20\d{2}', text)
     features.append(len(years_patterns))
     features.append(len(re.findall(r'present|current', text_lower)))
 
-    top_companies = ['google', 'meta', 'amazon', 'microsoft', 'apple', 'netflix',
-                     'stripe', 'airbnb', 'uber', 'linkedin']
-    features.append(sum(1 for c in top_companies if c in text_lower))
+    # 34. Company prestige signal
+    features.append(sum(c in text_lower for c in TOP_COMPANIES))
 
     return np.array(features, dtype=np.float32)
 

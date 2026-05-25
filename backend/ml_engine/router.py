@@ -12,17 +12,27 @@ from django.conf import settings
 logger = logging.getLogger(__name__)
 
 
+_cached_use_gemini = None
+_cached_ml_available = None
+
+
 def _use_gemini() -> bool:
-    key = getattr(settings, "GEMINI_API_KEY", "") or os.getenv("GEMINI_API_KEY", "")
-    return bool(key and key not in ("", "your-gemini-api-key", "REPLACE_ME"))
+    global _cached_use_gemini
+    if _cached_use_gemini is None:
+        key = getattr(settings, "GEMINI_API_KEY", "") or os.getenv("GEMINI_API_KEY", "")
+        _cached_use_gemini = bool(key and key not in ("", "your-gemini-api-key", "REPLACE_ME"))
+    return _cached_use_gemini
 
 
 def _ml_available() -> bool:
-    try:
-        from ml_engine.inference import ModelStore
-        return ModelStore.available()
-    except Exception:
-        return False
+    global _cached_ml_available
+    if _cached_ml_available is None:
+        try:
+            from ml_engine.inference import ModelStore
+            _cached_ml_available = ModelStore.available()
+        except Exception:
+            _cached_ml_available = False
+    return _cached_ml_available
 
 
 def get_backend() -> str:
